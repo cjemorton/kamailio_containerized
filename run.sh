@@ -66,34 +66,42 @@ install_kamailio_5_3() {
         lxc info $container_name
 }
 
-
+#CONFIGURE
 configure_kamailio_5_3() {
 	local container_name=$1
-	echo "Restoring From Snapshot, starting configuration."
-	lxc restore $container_name $container_name-packages_installed
-        check_connectivity $container_name
 	lxc info $container_name
+# Starting configuration.
+#	lxc exec $container_name -- printenv
 
-	echo -e "\n\nUse password: #i&6zTJ6uCpf9P\n\n"
-	lxc exec $container_name -- mysql_secure_installation
+	lxc exec $container_name -- sh -c "mysql --defaults-extra-file=/root/mysql_secure.cnf -e \"ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$(printenv MYSQLROOTUSERPASSWORD)';\""
+
+
+
+
+
+
+
+######################
+#	echo -e "\n\nUse password: #i&6zTJ6uCpf9P\n\n"
+#	lxc exec $container_name -- mysql_secure_installation
 
 	# Get kamailio_setup_default_database.sql from gist.
-	lxc exec $container_name -- sh -c "curl -o /etc/kamailio/kamailio_setup_default_database.sql https://gist.githubusercontent.com/cjemorton/3194c633edb63f136902af598bb43226/raw"
-	lxc exec $container_name -- sh -c "mysql -sfu root -p < /etc/kamailio/kamailio_setup_default_database.sql"
+#	lxc exec $container_name -- sh -c "curl -o /etc/kamailio/kamailio_setup_default_database.sql https://gist.githubusercontent.com/cjemorton/3194c633edb63f136902af598bb43226/raw"
+#	lxc exec $container_name -- sh -c "mysql -sfu root -p < /etc/kamailio/kamailio_setup_default_database.sql"
 
-	# Get kamctlrc from gist
-	lxc exec $container_name -- sh -c "curl -o /etc/kamailio/kamctlrc https://gist.githubusercontent.com/cjemorton/e6b7f07bfb99dc773e8642e10c321e22/raw"
+#	# Get kamctlrc from gist
+#	lxc exec $container_name -- sh -c "curl -o /etc/kamailio/kamctlrc https://gist.githubusercontent.com/cjemorton/e6b7f07bfb99dc773e8642e10c321e22/raw"
 
 	# Patch /etc/kamailio/kamailio.cfg with correct sql password.
-	lxc exec $container_name -- sh -c "sed -i 's#^#!define DBURL "mysql://kamailio:kamailiorw@localhost/kamailio"##!define DBURL "mysql://kamailio:w526WWmi7Ju7G@localhost/kamailio"#' /etc/kamailio/kamailio.cfg"
+#	lxc exec $container_name -- sh -c "sed -i 's#^#!define DBURL "mysql://kamailio:kamailiorw@localhost/kamailio"##!define DBURL "mysql://kamailio:w526WWmi7Ju7G@localhost/kamailio"#' /etc/kamailio/kamailio.cfg"
 
-	lxc exec $container_name -- sh -c "kamdbctl create"
+#	lxc exec $container_name -- sh -c "kamdbctl create"
 #	lxc exec $container_name -- kamctl add 100 100
 #	lxc exec $container_name -- systemctl start kamailio
 #	lxc exec $container_name -- systemctl enable kamailio
 #	lxc exec $container_name -- systemctl status kamailio
 
-	lxc exec $container_name -- /bin/bash
+#	lxc exec $container_name -- /bin/bash
 
 }
 generate_settings_create() {
@@ -208,13 +216,44 @@ generate_settings_create() {
         fi
 }
 
-#DISPLAY Settings.
-generate_settings_display() {
-    [ -e "$settings_kamailio_yaml" ] && \
-        awk -F': *' '/^- mysql_[^_]+_user_password:/ {if (!displayed[$1]) {printf "| %-30s | %-25s |\n", $1, $2; displayed[$1]=1}}' "$settings_kamailio_yaml"
-}
 
+# Set Environment Variables and Display Settings.
+generate_settings_display() {
+	local container_name=$1
+	settings_file=.settings_kamailio.yaml
+
+# Check if the settings file exists
+if [ -e "$settings_file" ]; then
+    # Loop over each line in the file
+    while IFS= read -r line; do
+        # Extract everything before and after ':'
+        key="${line%%:*}"
+        value="${line#*: }"
+
+        # Trim leading and trailing spaces from key and value
+        key="$(echo "$key" | awk '{$1=$1;print}')"
+        value="$(echo "$value" | awk '{$1=$1;print}')"
+
+        # Remove hyphens and underscores, capitalize key, and replace spaces with underscores
+        key="$(echo "$key" | sed -e 's/[-_]//g' | awk '{print toupper($0)}' | tr -d '[:space:]' | sed 's/[[:space:]]/_/g')"
+
+        # Print the variables
+        echo "$key: $value"
+
+        # Set variables with extracted values
+	lxc config set $container_name environment.${key} "$value"
+        declare "${key}=$value"
+
+    done < "$settings_file"
+else
+    echo "Settings file $settings_file not found."
+fi
+
+##lxc exec $container_name -- printenv
+
+}
 generate_settings() {
+	local container_name=$1
 	settings_kamailio_yaml=.settings_kamailio.yaml
 	if [ -e "$settings_kamailio_yaml" ]; then
 	    read -p "Do you want to delete $settings_kamailio_yaml? (yes/no) " answer
@@ -223,10 +262,10 @@ generate_settings() {
 	        [Yy]|[Yy][Ee][Ss])
 	            rm "$settings_kamailio_yaml"
 	            echo "File deleted, creating new."
-		    generate_settings_create
+		    generate_settings_create $container_name
 	            ;;
 	        [Nn]|[Nn][Oo])
-		    generate_settings_display
+		    generate_settings_display $container_name
 	            ;;
 	        *)
 	            echo "Invalid input. File not deleted."
@@ -307,21 +346,26 @@ if lxc list --format csv | grep $container_name &> /dev/null; then
    fi
    if [ "$#" -ge 2 ] && [ "$2" = "-c" ]; then
         check_connectivity $container_name
+	echo "Restoring From Snapshot, starting configuration."
+        lxc restore $container_name $container_name-packages_installed
+	generate_settings_display $container_name
         configure_kamailio_5_3 $container_name
    fi
+
+   if [ "$#" -ge 2 ] && [ "$2" = "-s" ]; then
+	generate_settings $container_name
+   fi
+
 else
 
 	if [ -z "$1" ]; then
 	    echo "Welcome to the Install Script: Tell me what to do with these options"
 		lxc ls
 		echo "-n : Creates a new lxc container, and takes a snapshot"
-		echo "-s : Generate settings file"
+		echo "<container_name> -s : Generate settings file"
 		echo "<container_name> -r : Roll back to a fresh snapshot"
 		echo "<container_name> -k : Roll back to a fresh snapshot, and install kamailio"
 		echo "<container_name> -c : Roll back to a fresh snapshot of all packages installed - start patching and configuation."
-
-	elif [ "$1" = "-s" ]; then
-		generate_settings
 
 	elif [ "$1" = "-n" ]; then
 	    echo "You chose '-n'. : Running commands."
