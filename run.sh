@@ -266,22 +266,26 @@ install_ssh() {
        lxc exec $container_name -- echo "a3f6c123" | passwd --stdin root
 #       lxc console $container_name
 }
-check_if_rocky_linux() {
+
+check_rocky_linux_version() {
     if [ -e /etc/os-release ]; then
         source /etc/os-release
         if [ "$ID" == "rocky" ]; then
-            echo "This system is running Rocky Linux."
+            echo "Rocky Linux version: $VERSION_ID"
         else
             echo "This system is not running Rocky Linux. Detected OS: $ID"
-	exit 1
+
+	    echo "This script was written to work on Rocky Linux 8.9, if it doesn't work on your system please modify it accordingly."
+            exit 1
         fi
     else
-        echo "Unable to determine the OS. /etc/os-release file not found."
-	exit 1
-   fi
+        echo "Unable to determine the OS version. /etc/os-release file not found."
+        exit 1
+    fi
 }
-check_if_rocky_linux
 
+# Example usage
+check_rocky_linux_version
 # Get container name from the terminal, check to see if it exists.
 container_name="$1"
 
