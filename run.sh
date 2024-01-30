@@ -63,7 +63,7 @@ install_kamailio_5_3() {
 
 	echo "Take Snapshot of system: $container_name-packages_installed"
 	lxc snapshot $container_name $container_name-packages_installed
-        lxc info $container_name
+ lxc info $container_name
 }
 
 #CONFIGURE
