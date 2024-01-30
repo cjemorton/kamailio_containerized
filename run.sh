@@ -323,7 +323,11 @@ check_rocky_linux_version() {
     fi
 }
 
-# Example usage
+# #########################
+# Program Start.
+# #########################
+
+# Check the system to make sure its running on a compatable system.
 check_rocky_linux_version
 # Get container name from the terminal, check to see if it exists.
 container_name="$1"
