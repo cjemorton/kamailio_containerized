@@ -71,10 +71,76 @@ configure_kamailio_5_3() {
 	local container_name=$1
 	lxc info $container_name
 # Starting configuration.
-#	lxc exec $container_name -- printenv
+	echo "Starting Config"
+	lxc exec $container_name -- /bin/bash -c 'echo "[client]" > .my.cnf'
+	lxc exec $container_name -- /bin/bash -c 'echo "user=root" >> .my.cnf'
+	lxc exec $container_name -- /bin/bash -c 'echo "password=$MYSQLROOTUSERPASSWORD" >> .my.cnf'
+	lxc exec $container_name -- /bin/bash -c 'chmod 600 .my.cnf'
 
-	lxc exec $container_name -- sh -c "mysql --defaults-extra-file=/root/mysql_secure.cnf -e \"ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$(printenv MYSQLROOTUSERPASSWORD)';\""
+#############################################################################
+# Reset mysql root password script.
+#############################################################################
+cat << 'EOF' > alter_mysql_user.sh
+#!/bin/bash
+systemctl start mysqld
+service_name="mysqld"
+check_service_status() {
+    systemctl is-active --quiet "$service_name"
+}
+while ! check_service_status; do
+    echo "Waiting for $service_name to start..."
+    sleep 1
+done
+echo "$service_name is now running. Continue with the script."
 
+new_password=$(grep -Po "(?<=password=)[^\s]+" /root/.my.cnf)
+alter_command="ALTER USER 'root'@'localhost' IDENTIFIED BY '$new_password';"
+mysql -u root --skip-password -e "$alter_command"
+echo "Done! : MySQL root password changed to: $new_password"
+
+##
+# Inject new users, and set their permissions.
+# SIREMIS
+mysql -u root -e "CREATE USER 'siremis'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQLSIREMISUSERPASSWORD';"
+mysql -u root -e "GRANT ALL PRIVILEGES ON *.* TO 'siremis'@'localhost' WITH GRANT OPTION;"
+# KAMAILIO
+#mysql -u root -e "CREATE USER 'kamailio'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQLKAMAILIOUSERPASSWORD';"
+#mysql -u root -e "GRANT ALL PRIVILEGES ON *.* TO 'kamailio'@'localhost' WITH GRANT OPTION;"
+# KAMAILIORO
+#mysql -u root -e "CREATE USER 'kamailioro'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQLKAMAILIOROUSERPASSWORD';"
+#mysql -u root -e "GRANT ALL PRIVILEGES ON *.* TO 'kamailioro'@'localhost' WITH GRANT OPTION;"
+
+echo "root $MYSQLROOTUSERPASSWORD"
+echo "siremis $MYSQLSIREMISUSERPASSWORD"
+echo "kamailio $MYSQLKAMAILIOUSERPASSWORD"
+echo "kamailioro $MYSQLKAMAILIOROUSERPASSWORD"
+unset MYSQLROOTUSERPASSWORD
+unset MYSQLSIREMISUSERPASSWORD
+unset MYSQLKAMAILIOUSERPASSWORD
+unset MYSQLKAMAILIOROUSERPASSWORD
+printenv
+EOF
+#############################################################################
+
+	lxc file push alter_mysql_user.sh $container_name/root/
+	rm alter_mysql_user.sh
+	lxc exec $container_name -- chmod +x alter_mysql_user.sh
+	lxc exec $container_name -- /bin/bash -c "/root/alter_mysql_user.sh"
+
+
+	# Upload kamctlrc if it exists.
+	if [ -e "kamctlrc" ]; then
+		lxc file push kamctlrc $container_name/etc/kamailio/
+		lxc exec $container_name -- kamdbctl create
+	fi
+	# Upload kamailio.cfg if it exists
+	if [ -e "kamailio.cfg" ]; then
+		lxc file push kamailio.cfg $container_name/etc/kamailio/
+		lxc exec $container_name -- systemctl stop kamailio
+		lxc exec $container_name -- systemctl start kamailio
+	fi
+
+	lxc exec $container_name -- /bin/bash
 
 
 
@@ -281,7 +347,7 @@ create_container() {
 }
 
 check_connectivity() {
-    local container_name=$1
+   local container_name=$1
 
     echo "Checking outward connectivity for $container_name."
     while ! lxc exec $container_name -- ping -c 3 1.1.1.1 &> /dev/null; do
